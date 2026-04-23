@@ -99,8 +99,8 @@ def train():
         print(f"Epoca {epoch+1:>3}/{num_epochs} | loss {avg_loss:.4f} | accuracy {accuracy:.1f}%")
 
     print("\nTraining completato.")
-    torch.save(model.state_dict(), "encoder_classifier.pt")
-    print("Modello salvato → encoder_classifier.pt")
+    torch.save(model.state_dict(), "checkpoints/encoder_classifier.pt")
+    print("Modello salvato -> checkpoints/encoder_classifier.pt")
 
 
 if __name__ == "__main__":

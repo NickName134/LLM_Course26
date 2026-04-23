@@ -58,6 +58,13 @@ class ReviewDataset(Dataset): # definiamo una classe che estende Dataset di PyTo
 
     def __getitem__(self, idx: int): # restituisce il campione alla posizione idx
         text, label = self.data[idx]
+        # self.data[idx] recupera la tupla alla posizione idx
+        # es. self.data[0] = ("il film è bellissimo davvero", 1)
+        # text, label = ... spacchetta la tupla in due variabili separate
+        # equivalente a:
+        #   tupla = self.data[idx]
+        #   text  = tupla[0]
+        #   label = tupla[1]
 
         # TODO 1 ──────────────────────────────────────────────────
         # Prepara la sequenza di input per il modello.
@@ -79,7 +86,7 @@ class ReviewDataset(Dataset): # definiamo una classe che estende Dataset di PyTo
         # Output: ids = [2, 4, 23, 7, 156, 0, 0, ...]  (lunghezza 32)
         #         mask= [1, 1,  1, 1,   1, 0, 0, ...]  (lunghezza 32)
         ids = self.tokenizer.encode(text) # restituisce una lista di interi
-        ids = [self.tokenizer.cls_id()] + ids # aggiungiamo l'id di [CLS] all'inizio
+        ids = [self.tokenizer.cls_id()] + ids # aggiungiamo l'id di [CLS] all'inizio (convenzione BERT)
         pass
 
         # TODO 2 ──────────────────────────────────────────────────
