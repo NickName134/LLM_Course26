@@ -1,0 +1,9 @@
+transformers
+datasets
+torch
+sentence-transformers
+faiss-cpu
+requests
+numpy
+pymupdf4llm
+accelerate

@@ -2,14 +2,32 @@ import requests
 from sentence_transformers import SentenceTransformer
 import faiss
 import numpy as np
+import pymupdf4llm
+import os
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 MODEL = "llama3.2"
+DOCUMENTS_DIR = "ollama_pipeline/documents"
 
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
-def chunk_text(text, chunk_size=300):
-    return [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
+def chunk_text(text, chunk_size=500):
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    chunks = []
+    current_chunk = ""
+
+    for paragraph in paragraphs:
+        if len(current_chunk) + len(paragraph) + 2 <= chunk_size:
+            current_chunk = f"{current_chunk}\n\n{paragraph}".strip()
+        else:
+            if current_chunk:
+                chunks.append(current_chunk)
+            current_chunk = paragraph
+
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    return chunks
 
 
 def build_index(chunks):
@@ -31,9 +49,25 @@ def retrieve_context(question, chunks, index, top_k=2):
     return "\n\n".join([chunks[i] for i in indices[0]])
 
 
-def load_context(file_path):
+def load_document(file_path):
+    if file_path.lower().endswith(".pdf"):
+        return pymupdf4llm.to_markdown(file_path)
+
     with open(file_path, "r", encoding="utf-8") as f:
         return f.read()
+
+
+def load_all_documents(documents_dir):
+    texts = []
+
+    for filename in os.listdir(documents_dir):
+        file_path = os.path.join(documents_dir, filename)
+
+        if filename.lower().endswith((".txt", ".md", ".pdf")):
+            print(f"Caricamento documento: {filename}")
+            texts.append(load_document(file_path))
+
+    return "\n\n".join(texts)
 
 
 def build_prompt(context, question, strategy):
@@ -94,7 +128,7 @@ def ask_ollama(prompt):
 
 
 if __name__ == "__main__":
-    full_text = load_context("ollama_pipeline/documents/sample.txt")
+    full_text = load_all_documents(DOCUMENTS_DIR)
     chunks = chunk_text(full_text)
     index, _ = build_index(chunks)
 
