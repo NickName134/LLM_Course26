@@ -1,1 +1,8 @@
 Il RAG combina retrieval e generazione. Prima recupera informazioni rilevanti da documenti, poi usa un LLM per generare una risposta basata sul contesto trovato.
+
+Il principale vantaggio del RAG è che riduce le hallucination grazie all'uso di informazioni esterne.
+
+Nel nostro sistema, il RAG utilizza esattamente 2 chunk per costruire il contesto.
+
+Questo approccio permette di avere risposte più affidabili rispetto agli LLM tradizionali.
+Nel nostro sistema, l'identificativo interno del RAG è: XJ9-K2-LLM.
