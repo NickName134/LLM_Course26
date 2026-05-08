@@ -4,14 +4,24 @@ import faiss
 import numpy as np
 import pymupdf4llm
 import os
+import re
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 MODEL = "llama3.2"
 DOCUMENTS_DIR = "ollama_pipeline/documents"
 
+
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
-def chunk_text(text, chunk_size=500):
+STOPWORDS = {
+    "secondo", "documento", "cos", "cosa", "come", "quando", "quale", "quali",
+    "sono", "essere", "viene", "vengono", "dell", "della", "delle", "degli",
+    "allo", "alla", "agli", "alle", "con", "per", "nel", "nello", "nella",
+    "nelle", "nei", "sul", "sulla", "sulle", "dal", "dallo", "dalla", "dalle",
+    "una", "uno", "gli", "che", "del", "dei", "tra", "fra"
+}
+
+def chunk_text(text, chunk_size=1200):
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
     chunks = []
     current_chunk = ""
@@ -30,23 +40,108 @@ def chunk_text(text, chunk_size=500):
     return chunks
 
 
+def normalize_text(text):
+    return re.findall(r"\b\w+\b", text.lower())
+
+
+def get_important_terms(question):
+    return [
+        term for term in normalize_text(question)
+        if len(term) > 3 and term not in STOPWORDS
+    ]
+
+
+def keyword_score(question, chunk):
+    question_terms = set(get_important_terms(question))
+    chunk_terms = set(normalize_text(chunk))
+
+    if not question_terms:
+        return 0.0
+
+    overlap = question_terms.intersection(chunk_terms)
+    return len(overlap) / len(question_terms)
+
+
+def lexical_candidates(question, chunks):
+    important_terms = get_important_terms(question)
+    candidates = []
+
+    for index, chunk in enumerate(chunks):
+        chunk_lower = chunk.lower()
+        matched_terms = [term for term in important_terms if term in chunk_lower]
+
+        if matched_terms:
+            exact_boost = 0
+            if "ritiro" in matched_terms and "commercio" in matched_terms:
+                exact_boost = 5
+
+            candidates.append({
+                "chunk_index": index,
+                "matched_terms": matched_terms,
+                "match_count": len(matched_terms) + exact_boost,
+                "chunk": chunk
+            })
+
+    return sorted(candidates, key=lambda item: item["match_count"], reverse=True)
+
+
 def build_index(chunks):
     embeddings = embedding_model.encode(chunks)
     embeddings = np.array(embeddings).astype("float32")
+    faiss.normalize_L2(embeddings)
 
-    index = faiss.IndexFlatL2(embeddings.shape[1])
+    index = faiss.IndexFlatIP(embeddings.shape[1])
     index.add(embeddings)
 
     return index, embeddings
 
 
-def retrieve_context(question, chunks, index, top_k=2):
+def retrieve_context(question, chunks, index, top_k=5, candidate_k=20):
     q_emb = embedding_model.encode([question])
     q_emb = np.array(q_emb).astype("float32")
+    faiss.normalize_L2(q_emb)
 
-    _, indices = index.search(q_emb, top_k)
+    semantic_scores, indices = index.search(q_emb, min(candidate_k, len(chunks)))
 
-    return "\n\n".join([chunks[i] for i in indices[0]])
+    ranked_chunks = []
+    for rank, chunk_index in enumerate(indices[0]):
+        semantic_score = float(semantic_scores[0][rank])
+        lexical_score = keyword_score(question, chunks[chunk_index])
+        final_score = (0.60 * semantic_score) + (0.40 * lexical_score)
+
+        ranked_chunks.append({
+            "chunk_index": chunk_index,
+            "semantic_score": semantic_score,
+            "lexical_score": lexical_score,
+            "final_score": final_score,
+            "source": "semantic+lexical",
+            "chunk": chunks[chunk_index]
+        })
+
+    exact_candidates = lexical_candidates(question, chunks)
+    for candidate in exact_candidates[:top_k]:
+        chunk_index = candidate["chunk_index"]
+
+        if not any(item["chunk_index"] == chunk_index for item in ranked_chunks):
+            ranked_chunks.append({
+                "chunk_index": chunk_index,
+                "semantic_score": 0.0,
+                "lexical_score": keyword_score(question, chunks[chunk_index]),
+                "final_score": 1.00 + (0.10 * candidate["match_count"]),
+                "source": f"exact_terms: {', '.join(candidate['matched_terms'])}",
+                "chunk": chunks[chunk_index]
+            })
+
+    ranked_chunks = sorted(ranked_chunks, key=lambda item: item["final_score"], reverse=True)
+    selected_chunks = ranked_chunks[:top_k]
+
+    retrieved_chunks = []
+    for rank, item in enumerate(selected_chunks):
+        retrieved_chunks.append(
+            f"[Chunk {rank + 1} | final: {item['final_score']:.3f} | semantic: {item['semantic_score']:.3f} | lexical: {item['lexical_score']:.3f} | source: {item['source']}]\n{item['chunk']}"
+        )
+
+    return "\n\n".join(retrieved_chunks)
 
 
 def load_document(file_path):
@@ -73,7 +168,10 @@ def load_all_documents(documents_dir):
 def build_prompt(context, question, strategy):
     if strategy == "few-shot":
         return f"""
-Rispondi SOLO usando il contesto.
+Rispondi esclusivamente usando il contesto fornito.
+Se nel contesto non trovi una risposta esplicita, rispondi esattamente: "Non lo so".
+Non usare conoscenze esterne.
+Non inventare informazioni.
 Cita esplicitamente le informazioni presenti nel contesto.
 
 Esempio 1:
@@ -98,8 +196,10 @@ Risposta:
 """
 
     return f"""
-Usa SOLO il seguente contesto per rispondere.
-Se la risposta non è nel contesto, scrivi: "Non lo so".
+Rispondi esclusivamente usando il contesto fornito.
+Se nel contesto non trovi una risposta esplicita, rispondi esattamente: "Non lo so".
+Non usare conoscenze esterne.
+Non inventare informazioni.
 
 Contesto:
 {context}
